@@ -11,10 +11,7 @@ import {
   print,
 } from 'graphql';
 import resolvable, { Resolvable } from '@josephg/resolvable';
-import {
-  InMemoryLRUCache,
-  PrefixingKeyValueCache,
-} from 'apollo-server-caching';
+import Keyv from 'keyv';
 import type {
   ApolloServerPlugin,
   GraphQLServiceContext,
@@ -56,6 +53,7 @@ import { InternalPluginId, pluginIsInternal } from './internalPlugin';
 import { newCachePolicy } from './cachePolicy';
 import { GatewayIsTooOldError, SchemaManager } from './utils/schemaManager';
 import { cloneObject } from './runHttpQuery';
+import { getKeyvDocumentNodeLRU } from './utils/KeyvDocumentNodeLRU';
 
 const NoIntrospection = (context: ValidationContext) => ({
   Field(node: FieldDefinitionNode) {
@@ -223,15 +221,15 @@ export class ApolloServerBase<TContext extends BaseContext> {
     }
 
     if (!requestOptions.cache) {
-      requestOptions.cache = new InMemoryLRUCache();
+      requestOptions.cache = getKeyvDocumentNodeLRU();
     }
 
     if (requestOptions.persistedQueries !== false) {
       const { cache: apqCache = requestOptions.cache!, ...apqOtherOptions } =
-        requestOptions.persistedQueries || Object.create(null);
+        requestOptions.persistedQueries ?? Object.create(null);
 
       requestOptions.persistedQueries = {
-        cache: new PrefixingKeyValueCache(apqCache, APQ_CACHE_PREFIX),
+        cache: apqCache ?? new Keyv({ namespace: APQ_CACHE_PREFIX }),
         ...apqOtherOptions,
       };
     } else {
@@ -860,18 +858,8 @@ export class ApolloServerBase<TContext extends BaseContext> {
     }
   }
 
-  private initializeDocumentStore(): InMemoryLRUCache<DocumentNode> {
-    return new InMemoryLRUCache<DocumentNode>({
-      // Create ~about~ a 30MiB InMemoryLRUCache.  This is less than precise
-      // since the technique to calculate the size of a DocumentNode is
-      // only using JSON.stringify on the DocumentNode (and thus doesn't account
-      // for unicode characters, etc.), but it should do a reasonable job at
-      // providing a caching document store for most operations.
-      //
-      // If you want to tweak the max size, pass in your own documentStore.
-      maxSize: Math.pow(2, 20) * 30,
-      sizeCalculator: InMemoryLRUCache.jsonBytesSizeCalculator,
-    });
+  private initializeDocumentStore(): Keyv<DocumentNode> {
+    return getKeyvDocumentNodeLRU();
   }
 
   protected async graphQLServerOptions(): Promise<

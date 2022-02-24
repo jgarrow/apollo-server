@@ -26,8 +26,8 @@ import type {
   GraphQLRequestContext,
   BaseContext,
 } from '@apollo/server-types';
-import { InMemoryLRUCache } from 'apollo-server-caching';
 import { newCachePolicy } from '../cachePolicy';
+import { getKeyvDocumentNodeLRU, LRU } from '../utils/KeyvDocumentNodeLRU';
 
 // This is a temporary kludge to ensure we preserve runQuery behavior with the
 // GraphQLRequestProcessor refactoring.
@@ -1132,7 +1132,7 @@ describe('runQuery', () => {
 
     it('caches the DocumentNode in the documentStore when instrumented', async () => {
       expect.assertions(4);
-      const documentStore = new InMemoryLRUCache<DocumentNode>();
+      const documentStore = getKeyvDocumentNodeLRU();
 
       const {
         plugins,
@@ -1157,7 +1157,7 @@ describe('runQuery', () => {
         events: { parsingDidStart, validationDidStart },
       } = createLifecyclePluginMocks();
 
-      const queryLarge = forgeLargerTestQuery(3, 'large');
+      const queryLarge = forgeLargerTestQuery(2, 'large');
       const querySmall1 = forgeLargerTestQuery(1, 'small1');
       const querySmall2 = forgeLargerTestQuery(1, 'small2');
 
@@ -1165,13 +1165,17 @@ describe('runQuery', () => {
       // size of the two smaller queries.  All three of these queries will never
       // fit into this cache, so we'll roll through them all.
       const maxSize =
-        InMemoryLRUCache.jsonBytesSizeCalculator(parse(querySmall1)) +
-        InMemoryLRUCache.jsonBytesSizeCalculator(parse(querySmall2));
+        LRU.jsonBytesSizeCalculator(parse(querySmall1)) +
+        LRU.jsonBytesSizeCalculator(parse(querySmall2));
 
-      const documentStore = new InMemoryLRUCache<DocumentNode>({
-        maxSize,
-        sizeCalculator: InMemoryLRUCache.jsonBytesSizeCalculator,
+      const store = new LRU<DocumentNode>({
+        max: maxSize,
+        length(obj) {
+          return LRU.jsonBytesSizeCalculator(obj);
+        },
       });
+
+      const documentStore = getKeyvDocumentNodeLRU({ store });
 
       await runRequest({ plugins, documentStore, queryString: querySmall1 });
       expect(parsingDidStart.mock.calls.length).toBe(1);
@@ -1182,9 +1186,7 @@ describe('runQuery', () => {
       expect(validationDidStart.mock.calls.length).toBe(2);
 
       // This query should be large enough to evict both of the previous
-      // from the LRU cache since it's larger than the TOTAL limit of the cache
-      // (which is capped at the length of small1 + small2) — though this will
-      // still fit (barely).
+      // from the LRU cache.
       await runRequest({ plugins, documentStore, queryString: queryLarge });
       expect(parsingDidStart.mock.calls.length).toBe(3);
       expect(validationDidStart.mock.calls.length).toBe(3);

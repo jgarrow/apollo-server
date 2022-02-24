@@ -21,7 +21,7 @@ import {
   enablePluginsForSchemaResolvers,
   symbolExecutionDispatcherWillResolveField,
 } from '../utils/schemaInstrumentation';
-import { InMemoryLRUCache } from 'apollo-server-caching';
+import { getKeyvDocumentNodeLRU } from '../utils/KeyvDocumentNodeLRU';
 import { Dispatcher } from '../utils/dispatcher';
 import { getOperationAST, parse, validate as graphqlValidate } from 'graphql';
 import { newCachePolicy } from '../cachePolicy';
@@ -127,7 +127,7 @@ export default async function pluginTestHarness<TContext>({
     request: graphqlRequest,
     metrics: Object.create(null),
     source: graphqlRequest.query,
-    cache: new InMemoryLRUCache(),
+    cache: getKeyvDocumentNodeLRU(),
     context,
     overallCachePolicy: newCachePolicy(),
   };

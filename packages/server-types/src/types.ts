@@ -11,8 +11,7 @@ import type {
   GraphQLCompositeType,
 } from 'graphql';
 
-// This seems like it could live in this package too.
-import type { KeyValueCache } from 'apollo-server-caching';
+import type Keyv from 'keyv';
 import type { Trace } from '@apollo/usage-reporting-protobuf';
 
 export type BaseContext = Record<string, any>;
@@ -88,7 +87,7 @@ export interface GraphQLServiceContext {
   schemaHash: SchemaHash;
   apollo: ApolloConfig;
   persistedQueries?: {
-    cache: KeyValueCache;
+    cache: Keyv;
   };
   serverlessFramework: boolean;
 }
@@ -143,7 +142,7 @@ export interface GraphQLRequestContext<TContext = Record<string, any>> {
   readonly schemaHash: SchemaHash;
 
   readonly context: TContext;
-  readonly cache: KeyValueCache;
+  readonly cache: Keyv;
 
   readonly queryHash?: string;
 

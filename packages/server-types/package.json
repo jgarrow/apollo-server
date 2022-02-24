@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@apollo/usage-reporting-protobuf": "^3.3.0",
-    "apollo-server-caching": "^3.3.0",
+    "@types/keyv": "^3.1.1",
     "@types/node-fetch": "^2.5.12"
   },
   "peerDependencies": {

@@ -23,7 +23,6 @@ import resolvable from '@josephg/resolvable';
 import {
   Config,
   PersistedQueryOptions,
-  KeyValueCache,
   ApolloServerPluginCacheControl,
 } from '../..';
 import { PersistedQueryNotFoundError } from '../../errors';
@@ -34,6 +33,7 @@ import type {
   GraphQLRequestListener,
   BaseContext,
 } from '@apollo/server-types';
+import Keyv from 'keyv';
 
 export * from './ApolloServer';
 export { createApolloFetch } from './apolloFetch';
@@ -1312,15 +1312,8 @@ export default ({
         },
       };
 
-      function createMockCache(): KeyValueCache {
-        const map = new Map<string, string>();
-        return {
-          set: jest.fn(async (key, val) => {
-            await map.set(key, val);
-          }),
-          get: jest.fn(async (key) => map.get(key)),
-          delete: jest.fn(async (key) => map.delete(key)),
-        };
+      function createMockCache(): Keyv<string> {
+        return new Keyv({ namespace: 'apq' });
       }
 
       let didEncounterErrors: jest.MockedFunction<
@@ -1351,10 +1344,13 @@ export default ({
         });
       }
 
-      let cache: KeyValueCache;
+      let cache: Keyv<string>;
+      let setSpy: jest.SpyInstance;
 
       beforeEach(async () => {
         cache = createMockCache();
+        setSpy = jest.spyOn(cache, 'set');
+
         didResolveSource = jest.fn();
         didEncounterErrors = jest.fn();
       });
@@ -1367,13 +1363,7 @@ export default ({
           query,
         });
 
-        expect(cache.set).toHaveBeenCalledWith(
-          expect.stringMatching(/^apq:/),
-          query,
-          expect.objectContaining({
-            ttl: 900,
-          }),
-        );
+        expect(setSpy).toHaveBeenCalledWith(hash, query, 900);
         expect(didResolveSource.mock.calls[0][0]).toHaveProperty(
           'source',
           query,
@@ -1388,13 +1378,7 @@ export default ({
           query,
         });
 
-        expect(cache.set).toHaveBeenCalledWith(
-          expect.stringMatching(/^apq:/),
-          '{testString}',
-          expect.not.objectContaining({
-            ttl: 900,
-          }),
-        );
+        expect(setSpy).toHaveBeenCalledWith(hash, '{testString}', 0);
         expect(didResolveSource.mock.calls[0][0]).toHaveProperty(
           'source',
           query,

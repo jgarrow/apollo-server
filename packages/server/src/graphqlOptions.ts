@@ -7,7 +7,7 @@ import type {
   GraphQLFormattedError,
   ParseOptions,
 } from 'graphql';
-import type { KeyValueCache } from 'apollo-server-caching';
+import type Keyv from 'keyv';
 import type {
   GraphQLExecutor,
   GraphQLResponse,
@@ -55,7 +55,7 @@ export interface GraphQLServerOptions<
   ) => GraphQLResponse | null;
   fieldResolver?: GraphQLFieldResolver<any, TContext>;
   debug?: boolean;
-  cache?: KeyValueCache;
+  cache?: Keyv<DocumentNode>;
   persistedQueries?: PersistedQueryOptions;
   plugins?: ApolloServerPlugin<TContext>[];
   documentStore?: DocumentStore | null;
@@ -65,7 +65,7 @@ export interface GraphQLServerOptions<
 }
 
 export interface PersistedQueryOptions {
-  cache?: KeyValueCache;
+  cache?: Keyv<string>;
   /**
    * Specified in **seconds**, this time-to-live (TTL) value limits the lifespan
    * of how long the persisted query should be cached.  To specify a desired

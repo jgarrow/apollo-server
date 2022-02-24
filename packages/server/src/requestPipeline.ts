@@ -50,7 +50,7 @@ import type {
 } from '@apollo/server-types';
 
 import { Dispatcher } from './utils/dispatcher';
-import { KeyValueCache, PrefixingKeyValueCache } from 'apollo-server-caching';
+import Keyv from 'keyv';
 
 export { GraphQLRequest, GraphQLResponse, GraphQLRequestContext };
 
@@ -127,7 +127,7 @@ export async function processGraphQLRequest<TContext>(
 
   let queryHash: string;
 
-  let persistedQueryCache: KeyValueCache | undefined;
+  let persistedQueryCache: Keyv<string> | undefined;
   metrics.persistedQueryHit = false;
   metrics.persistedQueryRegister = false;
 
@@ -150,11 +150,12 @@ export async function processGraphQLRequest<TContext>(
     // apollo-server 1.0-style middleware (graphqlExpress etc, not via the
     // ApolloServer class), it won't have been converted to
     // PrefixingKeyValueCache yet.
-    if (!(persistedQueryCache instanceof PrefixingKeyValueCache)) {
-      persistedQueryCache = new PrefixingKeyValueCache(
-        persistedQueryCache,
-        APQ_CACHE_PREFIX,
-      );
+
+    // FIXME! I have no idea how this worked before - this would create a new cache
+    // every time we received a request which is pointless. Am I missing something??
+    if (!(persistedQueryCache instanceof Keyv)) {
+      persistedQueryCache = new Keyv<string>({ namespace: APQ_CACHE_PREFIX });
+      config.persistedQueries.cache = persistedQueryCache;
     }
 
     queryHash = extensions.persistedQuery.sha256Hash;
@@ -316,12 +317,7 @@ export async function processGraphQLRequest<TContext>(
       persistedQueryCache.set(
         queryHash,
         query,
-        config.persistedQueries &&
-          typeof config.persistedQueries.ttl !== 'undefined'
-          ? {
-              ttl: config.persistedQueries.ttl,
-            }
-          : Object.create(null),
+        config.persistedQueries?.ttl ?? 0,
       ),
     ).catch(logger.warn);
   }
