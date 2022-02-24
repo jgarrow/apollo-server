@@ -3,7 +3,6 @@
 // only using JSON.stringify on the DocumentNode (and thus doesn't account
 // for unicode characters, etc.), but it should do a reasonable job at
 // providing a caching document store for most operations.
-//
 
 import LRUCache from 'lru-cache';
 import Keyv, { Store, type Options } from 'keyv';
