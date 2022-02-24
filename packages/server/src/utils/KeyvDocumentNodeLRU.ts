@@ -1,13 +1,13 @@
 // Create ~about~ a 30MiB LRU. This is less than precise
-    // since the technique to calculate the size of a DocumentNode is
-    // only using JSON.stringify on the DocumentNode (and thus doesn't account
-    // for unicode characters, etc.), but it should do a reasonable job at
-    // providing a caching document store for most operations.
-    //
+// since the technique to calculate the size of a DocumentNode is
+// only using JSON.stringify on the DocumentNode (and thus doesn't account
+// for unicode characters, etc.), but it should do a reasonable job at
+// providing a caching document store for most operations.
+//
 
-import LRUCache from "lru-cache";
+import LRUCache from 'lru-cache';
 import Keyv, { Store, type Options } from 'keyv';
-import type { DocumentNode } from "graphql";
+import type { DocumentNode } from 'graphql';
 
 // LRUCache wrapper to implement the Keyv `Store` interface.
 export class LRU<V> extends LRUCache<string, V> implements Store<V> {
@@ -16,7 +16,7 @@ export class LRU<V> extends LRUCache<string, V> implements Store<V> {
       super.del(key);
       return true;
     } catch {
-      return false
+      return false;
     }
   }
   async clear() {
@@ -24,7 +24,7 @@ export class LRU<V> extends LRUCache<string, V> implements Store<V> {
   }
 
   static jsonBytesSizeCalculator(obj: DocumentNode) {
-    return Buffer.byteLength(JSON.stringify(obj), 'utf8')
+    return Buffer.byteLength(JSON.stringify(obj), 'utf8');
   }
 }
 

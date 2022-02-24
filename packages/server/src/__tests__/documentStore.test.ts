@@ -86,7 +86,9 @@ describe('ApolloServerBase documentStore', () => {
 
     const cacheKey = `apollo:${hash}`;
     expect(Object.keys(cache)).toEqual([cacheKey]);
-    expect(JSON.parse(cache[cacheKey]!).value).toMatchObject(documentNodeMatcher);
+    expect(JSON.parse(cache[cacheKey]!).value).toMatchObject(
+      documentNodeMatcher,
+    );
 
     await server.executeOperation(operations.simple.op);
 
