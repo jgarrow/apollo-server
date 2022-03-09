@@ -11,7 +11,6 @@ import {
   GraphQLResponse,
 } from './requestPipeline';
 import type {
-  WithRequired,
   GraphQLExecutionResult,
   BaseContext,
   HTTPGraphQLRequest,
@@ -125,26 +124,77 @@ export function debugFromNodeEnv(nodeEnv: string = NODE_ENV) {
   return nodeEnv !== 'production' && nodeEnv !== 'test';
 }
 
-function fieldIfString(o: any, fieldName: string): string | undefined {
+function fieldIfString(
+  o: Record<string, any>,
+  fieldName: string,
+): string | undefined {
   if (typeof o[fieldName] === 'string') {
     return o[fieldName];
   }
   return undefined;
 }
 
-function fieldIfRecord(
-  o: any,
+function jsonParsedFieldIfNonEmptyString(
+  o: Record<string, any>,
   fieldName: string,
 ): Record<string, any> | undefined {
-  if (
-    typeof o[fieldName] === 'object' &&
-    o[fieldName] &&
-    !Array.isArray(o[fieldName]) &&
-    !Buffer.isBuffer(o[fieldName])
-  ) {
+  if (typeof o[fieldName] === 'string' && o[fieldName]) {
+    let hopefullyRecord;
+    try {
+      hopefullyRecord = JSON.parse(o[fieldName]);
+    } catch {
+      throw new HttpQueryError(
+        400,
+        `The ${fieldName} search parameter contains invalid JSON.`,
+      );
+    }
+    if (!isStringRecord(hopefullyRecord)) {
+      throw new HttpQueryError(
+        400,
+        `The ${fieldName} search parameter should contain a JSON-encoded object.`,
+      );
+    }
+    return hopefullyRecord;
+  }
+  return undefined;
+}
+
+function fieldIfRecord(
+  o: Record<string, any>,
+  fieldName: string,
+): Record<string, any> | undefined {
+  if (isStringRecord(o[fieldName])) {
     return o[fieldName];
   }
   return undefined;
+}
+
+function isStringRecord(o: any): o is Record<string, any> {
+  return o && typeof o === 'object' && !Buffer.isBuffer(o) && !Array.isArray(o);
+}
+
+function isNonEmptyStringRecord(o: any): o is Record<string, any> {
+  return isStringRecord(o) && Object.keys(o).length > 0;
+}
+
+function ensureQueryIsStringOrMissing(query: any) {
+  if (!query || typeof query === 'string') {
+    return;
+  }
+  // Check for a common error first.
+  if (query.kind === 'Document') {
+    throw new HttpQueryError(
+      400,
+      "GraphQL queries must be strings. It looks like you're sending the " +
+        'internal graphql-js representation of a parsed query in your ' +
+        'request instead of a request in the GraphQL query language. You ' +
+        'can convert an AST to a string using the `print` function from ' +
+        '`graphql`, or use a client like `apollo-client` which converts ' +
+        'the internal representation to a string for you.',
+    );
+  } else {
+    throw new HttpQueryError(400, 'GraphQL queries must be strings.');
+  }
 }
 
 export async function runHttpQuery<TContext extends BaseContext>(
@@ -160,40 +210,46 @@ export async function runHttpQuery<TContext extends BaseContext>(
 
   switch (httpRequest.method) {
     case 'POST':
-      if (
-        !httpRequest.body ||
-        typeof httpRequest.body !== 'object' ||
-        Buffer.isBuffer(httpRequest.body) ||
-        Array.isArray(httpRequest.body) ||
-        Object.keys(httpRequest.body).length === 0
-      ) {
+      if (!isNonEmptyStringRecord(httpRequest.body)) {
         throw new HttpQueryError(
           400,
           'POST body missing, invalid Content-Type, or JSON object has no keys.',
         );
       }
 
+      ensureQueryIsStringOrMissing(httpRequest.body.query);
+
       graphqlRequest = {
         query: fieldIfString(httpRequest.body, 'query'),
         operationName: fieldIfString(httpRequest.body, 'operationName'),
-        variables: fieldIfRecord(httpRequest.body.variables),
-        extensions: fieldIfRecord(httpRequest.body.extensions),
-          typeof httpRequest.body.query === 'string'
-            ? httpRequest.body.query
-            : undefined,
-        operationName: typeof httpRequest,
+        variables: fieldIfRecord(httpRequest.body, 'variables'),
+        extensions: fieldIfRecord(httpRequest.body, 'extensions'),
+        http: httpRequest,
       };
 
-      requestPayload = httpRequest.query;
       break;
     case 'GET':
-      if (!httpRequest.query || Object.keys(httpRequest.query).length === 0) {
+      if (!isNonEmptyStringRecord(httpRequest.searchParams)) {
         throw new HttpQueryError(400, 'GET query missing.');
       }
 
-      requestPayload = httpRequest.query;
-      break;
+      ensureQueryIsStringOrMissing(httpRequest.searchParams.query);
 
+      graphqlRequest = {
+        query: fieldIfString(httpRequest.searchParams, 'query'),
+        operationName: fieldIfString(httpRequest.searchParams, 'operationName'),
+        variables: jsonParsedFieldIfNonEmptyString(
+          httpRequest.searchParams,
+          'variables',
+        ),
+        extensions: jsonParsedFieldIfNonEmptyString(
+          httpRequest.searchParams,
+          'extensions',
+        ),
+        http: httpRequest,
+      };
+
+      break;
     default:
       throw new HttpQueryError(
         405,
@@ -237,126 +293,65 @@ export async function runHttpQuery<TContext extends BaseContext>(
     plugins,
   };
 
-  function buildRequestContext(
-    request: GraphQLRequest,
-  ): GraphQLRequestContext<TContext> {
-    // TODO: We currently shallow clone the context for every request,
-    // but that's unlikely to be what people want.
-    // We allow passing in a function for `context` to ApolloServer,
-    // but this only runs once for a batched request (because this is resolved
-    // in ApolloServer#graphQLServerOptions, before runHttpQuery is invoked).
-    // (Actually, this likely *IS* what people want: perhaps the biggest benefit
-    // of the batched HTTP protocol is sharing context (eg DataLoaders across
-    // operations.)
-    // NOTE: THIS IS DUPLICATED IN ApolloServerBase.prototype.executeOperation.
-    const context = cloneObject(options.context);
-    return {
+  const partialResponse: Pick<HTTPGraphQLResponse, 'headers' | 'statusCode'> = {
+    headers: new Map([['content-type', 'application/json']]),
+    statusCode: undefined,
+  };
+  let body: string;
+
+  try {
+    const requestContext: GraphQLRequestContext<TContext> = {
       // While `logger` is guaranteed by internal Apollo Server usage of
       // this `processHTTPRequest` method, this method has been publicly
       // exported since perhaps as far back as Apollo Server 1.x.  Therefore,
       // for compatibility reasons, we'll default to `console`.
+      // TODO(AS4): Probably when we refactor 'options' this special case will
+      // go away.
       logger: options.logger || console,
       schema: options.schema,
-      request,
-      response: {
-        http: {
-          headers: new Headers(),
-        },
-      },
-      context,
-      cache: options.cache,
+      request: graphqlRequest,
+      response: { http: partialResponse },
+      // We clone the context because there are some assumptions that every operation
+      // execution has a brand new context object; specifically, in order to implement
+      // willResolveField we put a Symbol on the context that is specific to a particular
+      // request pipeline execution. We could avoid this if we had a better way of
+      // instrumenting execution.
+      //
+      // We don't want to do a deep clone here, because one of the main advantages of
+      // using batched HTTP requests is to share context across operations for a
+      // single request.
+      // NOTE: THIS IS DUPLICATED IN ApolloServerBase.prototype.executeOperation.
+      context: cloneObject(context),
+      // TODO(AS4): fix ! as part of fixing GraphQLServerOptions
+      cache: options.cache!,
       debug: options.debug,
       metrics: {},
       overallCachePolicy: newCachePolicy(),
     };
-  }
+    const response = await processGraphQLRequest(options, requestContext);
 
-  const responseInit: ApolloServerHttpResponse = {
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  };
-
-  let body: string;
-
-  try {
-    if (Array.isArray(requestPayload)) {
-      if (options.allowBatchedHttpRequests === false) {
-        return throwHttpGraphQLError(
-          400,
-          [new Error('Operation batching disabled.')],
-          options,
-        );
-      }
-
-      // We're processing a batch request
-      const requests = requestPayload.map((requestParams) =>
-        parseGraphQLRequest(httpRequest.request, requestParams),
-      );
-
-      const responses = await Promise.all(
-        requests.map(async (request) => {
-          try {
-            const requestContext = buildRequestContext(request);
-            const response = await processGraphQLRequest(
-              options,
-              requestContext,
-            );
-            if (response.http) {
-              for (const [name, value] of response.http.headers) {
-                responseInit.headers![name] = value;
-              }
-
-              if (response.http.status) {
-                responseInit.status = response.http.status;
-              }
-            }
-            return response;
-          } catch (error) {
-            // A batch can contain another query that returns data,
-            // so we don't error out the entire request with an HttpError
-            return {
-              errors: formatApolloErrors([error as Error], options),
-            };
-          }
+    // This code is run on parse/validation errors and any other error that
+    // doesn't reach GraphQL execution
+    if (response.errors && typeof response.data === 'undefined') {
+      // don't include options, since the errors have already been formatted
+      return {
+        statusCode: response.http?.statusCode || 400,
+        headers: new Map([
+          ['content-type', 'application/json'],
+          ...response.http?.headers.entries(),
+        ]),
+        completeBody: prettyJSONStringify({
+          // TODO(AS4): Understand why we don't call formatApolloErrors here.
+          errors: response.errors,
+          extensions: response.extensions,
         }),
-      );
-
-      body = prettyJSONStringify(responses.map(serializeGraphQLResponse));
-    } else {
-      // We're processing a normal request
-      const request = parseGraphQLRequest(httpRequest.request, requestPayload);
-
-      const requestContext = buildRequestContext(request);
-
-      const response = await processGraphQLRequest(options, requestContext);
-
-      // This code is run on parse/validation errors and any other error that
-      // doesn't reach GraphQL execution
-      if (response.errors && typeof response.data === 'undefined') {
-        // don't include options, since the errors have already been formatted
-        return throwHttpGraphQLError(
-          response.http?.status || 400,
-          response.errors as any,
-          undefined,
-          response.extensions,
-          response.http?.headers,
-        );
-      }
-
-      if (response.http) {
-        for (const [name, value] of response.http.headers) {
-          responseInit.headers![name] = value;
-        }
-
-        if (response.http.status) {
-          responseInit.status = response.http.status;
-        }
-      }
-
-      body = prettyJSONStringify(serializeGraphQLResponse(response));
+        bodyChunks: null,
+      };
     }
+
+    body = prettyJSONStringify(serializeGraphQLResponse(response));
   } catch (error) {
+    // TODO(AS4): NEXT: Process HttpQueryError instead of rethrowing
     if (error instanceof HttpQueryError) {
       throw error;
     }
@@ -371,64 +366,6 @@ export async function runHttpQuery<TContext extends BaseContext>(
   return {
     graphqlResponse: body,
     responseInit,
-  };
-}
-
-function parseGraphQLRequest(
-  httpRequest: Pick<Request, 'url' | 'method' | 'headers'>,
-  requestParams: Record<string, any>,
-): GraphQLRequest {
-  let queryString: string | undefined = requestParams.query;
-  let extensions = requestParams.extensions;
-
-  if (typeof extensions === 'string' && extensions !== '') {
-    // For GET requests, we have to JSON-parse extensions. (For POST
-    // requests they get parsed as part of parsing the larger body they're
-    // inside.)
-    try {
-      extensions = JSON.parse(extensions);
-    } catch (error) {
-      throw new HttpQueryError(400, 'Extensions are invalid JSON.');
-    }
-  }
-
-  if (queryString && typeof queryString !== 'string') {
-    // Check for a common error first.
-    if ((queryString as any).kind === 'Document') {
-      throw new HttpQueryError(
-        400,
-        "GraphQL queries must be strings. It looks like you're sending the " +
-          'internal graphql-js representation of a parsed query in your ' +
-          'request instead of a request in the GraphQL query language. You ' +
-          'can convert an AST to a string using the `print` function from ' +
-          '`graphql`, or use a client like `apollo-client` which converts ' +
-          'the internal representation to a string for you.',
-      );
-    } else {
-      throw new HttpQueryError(400, 'GraphQL queries must be strings.');
-    }
-  }
-
-  const operationName = requestParams.operationName;
-
-  let variables = requestParams.variables;
-  if (typeof variables === 'string' && variables !== '') {
-    try {
-      // XXX Really we should only do this for GET requests, but for
-      // compatibility reasons we'll keep doing this at least for now for
-      // broken clients that ship variables in a string for no good reason.
-      variables = JSON.parse(variables);
-    } catch (error) {
-      throw new HttpQueryError(400, 'Variables are invalid JSON.');
-    }
-  }
-
-  return {
-    query: queryString,
-    operationName,
-    variables,
-    extensions,
-    http: httpRequest,
   };
 }
 

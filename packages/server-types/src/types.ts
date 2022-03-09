@@ -35,19 +35,22 @@ export interface HTTPGraphQLRequest {
   // use a search parameter parser like `qs` (used by `express` by default) that does
   // that and you want to look for that in your own plugin. AS itself will only
   // look for a handful of keys and will validate their value types.
-  searchParams: object;
+  searchParams: any;
   // read by your body-parser or whatever. we poke at it to make it into
   // the right real type.
   body: any;
 }
 
 export interface HTTPGraphQLResponseChunk {
+  // TODO(AS4): is it reasonable to make users have to lowercase keys? should
+  // we write our own Headers class? would prefer to not use a specific node-fetch
+  // implementation in AS4.
   headers: Map<string, string>;
   body: string;
 }
 
 export type HTTPGraphQLResponse = {
-  statusCode: number;
+  statusCode?: number;
   // need to figure out what headers this includes (eg JSON???)
   headers: Map<string, string>;
 } & (
@@ -136,7 +139,7 @@ export interface GraphQLRequest {
   operationName?: string;
   variables?: VariableValues;
   extensions?: Record<string, any>;
-  http?: Pick<Request, 'url' | 'method' | 'headers'>;
+  http?: HTTPGraphQLRequest;
 }
 
 export type VariableValues = { [name: string]: any };
@@ -145,7 +148,7 @@ export interface GraphQLResponse {
   data?: Record<string, any> | null;
   errors?: ReadonlyArray<GraphQLFormattedError>;
   extensions?: Record<string, any>;
-  http?: Pick<Response, 'headers'> & Partial<Pick<Mutable<Response>, 'status'>>;
+  http: Pick<HTTPGraphQLResponse, 'headers' | 'statusCode'>;
 }
 
 export interface GraphQLRequestMetrics {

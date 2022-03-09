@@ -150,12 +150,18 @@ export class ApolloServerExpress<
             // TODO(AS4): this is what AS3 did but maybe this is silly
             res.setHeader(key, value);
           }
-          // Errors dominate success.
-          res.statusCode = Math.max(response.statusCode, res.statusCode);
+          // If two responses both want to set the status code, one of them will win.
+          // Note that the normal success case leaves statusCode empty.
+          if (response.statusCode) {
+            res.statusCode = response.statusCode;
+          }
           return response.completeBody;
         }),
       );
 
+      if (!res.statusCode) {
+        res.statusCode = 200;
+      }
       res.send(
         Array.isArray(req.body)
           ? `[${responseBodies.join(',')}]`
