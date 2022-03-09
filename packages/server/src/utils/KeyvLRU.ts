@@ -10,13 +10,12 @@ import type { WithRequired } from '@apollo/server-types';
 
 // LRUCache wrapper to implement the Keyv `Store` interface.
 export class LRU<V> extends LRUCache<string, V> implements Store<V> {
-  async delete(key: string): Promise<boolean> {
-    try {
+  delete(key: string): boolean {
+    if (super.has(key)) {
       super.del(key);
       return true;
-    } catch {
-      return false;
     }
+    return false;
   }
 
   clear() {
