@@ -1,9 +1,9 @@
 import gql from 'graphql-tag';
 import { ApolloServerBase } from '../ApolloServer';
 import type { BaseContext } from '@apollo/server-types';
-import { getKeyvDocumentNodeLRU, LRU } from '../utils/KeyvDocumentNodeLRU';
+import { KeyvLRU } from '../utils/KeyvLRU';
 import Keyv from 'keyv';
-import type { DocumentStore } from '..';
+import type { DocumentNode } from 'graphql';
 
 const typeDefs = gql`
   type Query {
@@ -46,13 +46,12 @@ describe('ApolloServerBase documentStore', () => {
     await server.start();
 
     const options = await server['graphQLServerOptions']();
-    const embeddedStore = options.documentStore as DocumentStore;
+    const embeddedStore = options.documentStore!;
     expect(embeddedStore).toBeInstanceOf(Keyv);
 
     await server.executeOperation(operations.simple.op);
 
-    // @ts-ignore Keyv.opts isn't defined in the typings
-    expect(await embeddedStore.opts.getTotalSize()).toBe(508);
+    expect(embeddedStore.getTotalSize()).toBe(508);
 
     expect(await embeddedStore.get(operations.simple.hash)).toMatchObject(
       documentNodeMatcher,
@@ -60,7 +59,7 @@ describe('ApolloServerBase documentStore', () => {
   });
 
   it('documentStore - custom', async () => {
-    const documentStore = getKeyvDocumentNodeLRU();
+    const documentStore = new KeyvLRU<DocumentNode>();
 
     const getSpy = jest.spyOn(documentStore, 'get');
     const setSpy = jest.spyOn(documentStore, 'set');
@@ -74,27 +73,19 @@ describe('ApolloServerBase documentStore', () => {
 
     await server.executeOperation(operations.simple.op);
 
-    let cache: Record<string, string | undefined> = {};
+    let cache: Record<string, DocumentNode | undefined> = {};
 
-    // @ts-ignore
-    const store = documentStore.opts.store as LRU<string, string>;
+    cache[hash] = await documentStore.get(hash);
 
-    const keys = store.keys();
-    for (const key of keys) {
-      cache[key] = store.get(key);
-    }
-
-    const cacheKey = `apollo:${hash}`;
-    expect(Object.keys(cache)).toEqual([cacheKey]);
-    expect(JSON.parse(cache[cacheKey]!).value).toMatchObject(
-      documentNodeMatcher,
-    );
+    expect(Object.keys(cache)).toEqual([hash]);
+    expect(cache[hash]).toMatchObject(documentNodeMatcher);
 
     await server.executeOperation(operations.simple.op);
 
-    expect(Object.keys(cache)).toEqual([cacheKey]);
+    expect(Object.keys(cache)).toEqual([hash]);
 
-    expect(getSpy.mock.calls.length).toBe(2);
+    // one of these calls is ours
+    expect(getSpy.mock.calls.length).toBe(2 + 1);
     expect(setSpy.mock.calls.length).toBe(1);
   });
 

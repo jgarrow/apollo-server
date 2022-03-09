@@ -27,7 +27,7 @@ import type {
   BaseContext,
 } from '@apollo/server-types';
 import { newCachePolicy } from '../cachePolicy';
-import { getKeyvDocumentNodeLRU, LRU } from '../utils/KeyvDocumentNodeLRU';
+import { KeyvLRU, LRU } from '../utils/KeyvLRU';
 
 // This is a temporary kludge to ensure we preserve runQuery behavior with the
 // GraphQLRequestProcessor refactoring.
@@ -1132,7 +1132,7 @@ describe('runQuery', () => {
 
     it('caches the DocumentNode in the documentStore when instrumented', async () => {
       expect.assertions(4);
-      const documentStore = getKeyvDocumentNodeLRU();
+      const documentStore = new KeyvLRU<DocumentNode>();
 
       const {
         plugins,
@@ -1168,14 +1168,14 @@ describe('runQuery', () => {
         LRU.jsonBytesSizeCalculator(parse(querySmall1)) +
         LRU.jsonBytesSizeCalculator(parse(querySmall2));
 
-      const store = new LRU<DocumentNode>({
-        max: maxSize,
-        length(obj) {
-          return LRU.jsonBytesSizeCalculator(obj);
-        },
+      const documentStore = new KeyvLRU<DocumentNode>({
+        store: new LRU<DocumentNode>({
+          max: maxSize,
+          length(obj) {
+            return LRU.jsonBytesSizeCalculator(obj);
+          },
+        }),
       });
-
-      const documentStore = getKeyvDocumentNodeLRU({ store });
 
       await runRequest({ plugins, documentStore, queryString: querySmall1 });
       expect(parsingDidStart.mock.calls.length).toBe(1);

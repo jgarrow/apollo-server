@@ -55,7 +55,7 @@ export interface GraphQLServerOptions<
   ) => GraphQLResponse | null;
   fieldResolver?: GraphQLFieldResolver<any, TContext>;
   debug?: boolean;
-  cache?: Keyv<DocumentNode>;
+  cache?: Keyv<string>;
   persistedQueries?: PersistedQueryOptions;
   plugins?: ApolloServerPlugin<TContext>[];
   documentStore?: DocumentStore | null;

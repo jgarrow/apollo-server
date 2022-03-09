@@ -19,7 +19,11 @@ import type { GraphQLSchemaModule } from '@apollographql/apollo-tools';
 
 export type { GraphQLSchemaModule };
 
-import type Keyv from 'keyv';
+// import Keyv from 'keyv';
+// FIXME Keyv.opts isn't defined in the typings. This is a workaround
+// for now that we can remove once they're correct.
+// Related issue: https://github.com/DefinitelyTyped/DefinitelyTyped/pull/59154
+import type { KeyvWithOpts } from './utils/KeyvLRU';
 
 export type Context<T = object> = T;
 export type ContextFunction<FunctionParams = any, ProducedContext = object> = (
@@ -84,7 +88,12 @@ export interface GatewayInterface {
 // that older versions of `@apollo/gateway` build against AS3.
 export interface GraphQLService extends GatewayInterface {}
 
-export type DocumentStore = Keyv<DocumentNode>;
+// FIXME Keyv.opts isn't defined in the typings. This is a workaround
+// for now that we can remove once they're correct.
+// Related issue: https://github.com/DefinitelyTyped/DefinitelyTyped/pull/59154
+export type DocumentStore = KeyvWithOpts<DocumentNode> & {
+  getTotalSize(): number;
+};
 
 // This configuration is shared between all integrations and should include
 // fields that are not specific to a single integration

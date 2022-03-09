@@ -53,7 +53,7 @@ import { InternalPluginId, pluginIsInternal } from './internalPlugin';
 import { newCachePolicy } from './cachePolicy';
 import { GatewayIsTooOldError, SchemaManager } from './utils/schemaManager';
 import { cloneObject } from './runHttpQuery';
-import { getKeyvDocumentNodeLRU } from './utils/KeyvDocumentNodeLRU';
+import { KeyvLRU } from './utils/KeyvLRU';
 
 const NoIntrospection = (context: ValidationContext) => ({
   Field(node: FieldDefinitionNode) {
@@ -221,7 +221,7 @@ export class ApolloServerBase<TContext extends BaseContext> {
     }
 
     if (!requestOptions.cache) {
-      requestOptions.cache = getKeyvDocumentNodeLRU();
+      requestOptions.cache = new KeyvLRU<string>();
     }
 
     if (requestOptions.persistedQueries !== false) {
@@ -666,7 +666,7 @@ export class ApolloServerBase<TContext extends BaseContext> {
       // invalid operations as valid.
       documentStore:
         this.config.documentStore === undefined
-          ? this.initializeDocumentStore()
+          ? new KeyvLRU<DocumentNode>()
           : this.config.documentStore,
     };
   }
@@ -856,10 +856,6 @@ export class ApolloServerBase<TContext extends BaseContext> {
       plugin.__internal_installed_implicitly__ = true;
       this.plugins.push(plugin);
     }
-  }
-
-  private initializeDocumentStore(): Keyv<DocumentNode> {
-    return getKeyvDocumentNodeLRU();
   }
 
   protected async graphQLServerOptions(): Promise<
