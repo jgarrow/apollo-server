@@ -11,9 +11,59 @@ import type {
   GraphQLCompositeType,
 } from 'graphql';
 
+// TODO(AS4): Audit entire package for appropriateness of exports
+// TODO(AS4): Consider merging back in to `@apollo/server`. The motivation
+//   for a separate package is so that packages implementing plugins (and
+//   @apollo/gateway) don't need to have a dep on `@apollo/server` but maybe
+//   a peer dep would be appropriate for these.
+
 // This seems like it could live in this package too.
 import type { KeyValueCache } from 'apollo-server-caching';
 import type { Trace } from '@apollo/usage-reporting-protobuf';
+
+// TODO(AS4): Document this interface.
+export interface HTTPGraphQLRequest {
+  // capitalized (GET, POST, etc)
+  method: string;
+  // lowercase header name, multiple headers joined with ', ' like Headers.get
+  // does
+  headers: Map<string, string>;
+  // does not include query parameters. note that AS itself does not ever read
+  // this.
+  pathname: string;
+  // no name normalization. can theoretically have deeply nested stuff if you
+  // use a search parameter parser like `qs` (used by `express` by default) that does
+  // that and you want to look for that in your own plugin. AS itself will only
+  // look for a handful of keys and will validate their value types.
+  searchParams: object;
+  // read by your body-parser or whatever. we poke at it to make it into
+  // the right real type.
+  body: any;
+}
+
+export interface HTTPGraphQLResponseChunk {
+  headers: Map<string, string>;
+  body: string;
+}
+
+export type HTTPGraphQLResponse = {
+  statusCode: number;
+  // need to figure out what headers this includes (eg JSON???)
+  headers: Map<string, string>;
+} & (
+  | {
+      // TODO(AS4): document why we chose strings as output. (tl;dr: consistent
+      // rather than flexible JSON output. Can represent landing page. We can
+      // always add another entry point that returns un-serialized responses
+      // later.)
+      completeBody: string;
+      bodyChunks: null;
+    }
+  | {
+      completeBody: null;
+      bodyChunks: AsyncIterableIterator<HTTPGraphQLResponseChunk>;
+    }
+);
 
 export type BaseContext = Record<string, any>;
 

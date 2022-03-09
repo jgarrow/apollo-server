@@ -1,0 +1,11 @@
+- writing headers
+  - requestPipeline sets cache-control on PQ errors
+  - throwHttpGraphQLError sets content-type json
+  - processHTTPRequest sets content-type json, content-length
+  - cc plugin sets cache-control
+  - landing page writes content-type html
+- reading headers
+  - trace plugin reads apollo-federation-include-trace
+  - usage reporting plugin sends headers if suggested
+  - usage reporting plugin reads apollographql-client-* headers
+  - accept headers read (indirectly) for landing page

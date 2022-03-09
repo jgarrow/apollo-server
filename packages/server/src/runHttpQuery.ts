@@ -1,5 +1,8 @@
 import { Request, Headers } from 'node-fetch';
-import type { default as GraphQLOptions } from './graphqlOptions';
+import type {
+  default as GraphQLOptions,
+  GraphQLServerOptions,
+} from './graphqlOptions';
 import { ApolloError, formatApolloErrors } from './errors';
 import {
   processGraphQLRequest,
@@ -11,6 +14,8 @@ import type {
   WithRequired,
   GraphQLExecutionResult,
   BaseContext,
+  HTTPGraphQLRequest,
+  HTTPGraphQLResponse,
 } from '@apollo/server-types';
 import { newCachePolicy } from './cachePolicy';
 
@@ -120,67 +125,64 @@ export function debugFromNodeEnv(nodeEnv: string = NODE_ENV) {
   return nodeEnv !== 'production' && nodeEnv !== 'test';
 }
 
-export async function runHttpQuery<TContext extends BaseContext>(
-  request: HttpQueryRequest<TContext>,
-): Promise<HttpQueryResponse> {
-  const { options } = request;
+function fieldIfString(o: any, fieldName: string): string | undefined {
+  if (typeof o[fieldName] === 'string') {
+    return o[fieldName];
+  }
+  return undefined;
+}
 
+function fieldIfRecord(
+  o: any,
+  fieldName: string,
+): Record<string, any> | undefined {
+  if (
+    typeof o[fieldName] === 'object' &&
+    o[fieldName] &&
+    !Array.isArray(o[fieldName]) &&
+    !Buffer.isBuffer(o[fieldName])
+  ) {
+    return o[fieldName];
+  }
+  return undefined;
+}
+
+export async function runHttpQuery<TContext extends BaseContext>(
+  httpRequest: HTTPGraphQLRequest,
+  context: TContext,
+  options: GraphQLServerOptions<TContext>,
+): Promise<HTTPGraphQLResponse> {
   if (options.debug === undefined) {
     options.debug = debugFromNodeEnv(options.nodeEnv);
   }
 
-  const config = {
-    schema: options.schema,
-    logger: options.logger,
-    rootValue: options.rootValue,
-    context: request.context,
-    validationRules: options.validationRules,
-    executor: options.executor,
-    fieldResolver: options.fieldResolver,
-
-    // TODO: Use proper option types to ensure this
-    // The cache is guaranteed to be initialized in ApolloServer, and
-    // cacheControl defaults will also have been set if a boolean argument is
-    // passed in.
-    cache: options.cache!,
-    documentStore: options.documentStore,
-
-    persistedQueries: options.persistedQueries,
-
-    formatError: options.formatError,
-    formatResponse: options.formatResponse,
-
-    debug: options.debug,
-
-    plugins: options.plugins || [],
-
-    allowBatchedHttpRequests: options.allowBatchedHttpRequests,
-  };
-
-  return processHTTPRequest(config, request);
-}
-
-export async function processHTTPRequest<TContext>(
-  options: WithRequired<GraphQLOptions<TContext>, 'cache' | 'plugins'> & {
-    context: TContext;
-  },
-  httpRequest: HttpQueryRequest<TContext>,
-): Promise<HttpQueryResponse> {
-  let requestPayload;
+  let graphqlRequest: GraphQLRequest;
 
   switch (httpRequest.method) {
     case 'POST':
       if (
-        !httpRequest.query ||
-        typeof httpRequest.query === 'string' ||
-        Buffer.isBuffer(httpRequest.query) ||
-        Object.keys(httpRequest.query).length === 0
+        !httpRequest.body ||
+        typeof httpRequest.body !== 'object' ||
+        Buffer.isBuffer(httpRequest.body) ||
+        Array.isArray(httpRequest.body) ||
+        Object.keys(httpRequest.body).length === 0
       ) {
         throw new HttpQueryError(
           400,
           'POST body missing, invalid Content-Type, or JSON object has no keys.',
         );
       }
+
+      graphqlRequest = {
+        query: fieldIfString(httpRequest.body, 'query'),
+        operationName: fieldIfString(httpRequest.body, 'operationName'),
+        variables: fieldIfRecord(httpRequest.body.variables),
+        extensions: fieldIfRecord(httpRequest.body.extensions),
+          typeof httpRequest.body.query === 'string'
+            ? httpRequest.body.query
+            : undefined,
+        operationName: typeof httpRequest,
+      };
 
       requestPayload = httpRequest.query;
       break;
@@ -203,7 +205,7 @@ export async function processHTTPRequest<TContext>(
       );
   }
 
-  const plugins = [...options.plugins];
+  const plugins = [...(options.plugins ?? [])];
 
   // GET operations should only be queries (not mutations). We want to throw
   // a particular HTTP error in that case.

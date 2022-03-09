@@ -9,6 +9,7 @@ import accepts from 'accepts';
 import asyncHandler from 'express-async-handler';
 import type { BaseContext } from '@apollo/server-types';
 import { debugFromNodeEnv, throwHttpGraphQLError } from '../runHttpQuery';
+import type { HTTPGraphQLRequest } from '@apollo/server-types';
 
 export interface ExpressContext {
   req: express.Request;
@@ -31,6 +32,7 @@ export class ApolloServerExpress<
     const landingPage = this.getLandingPage();
 
     return asyncHandler(async (req, res) => {
+      // TODO(AS4): move landing page logic into core
       if (landingPage && prefersHtml(req)) {
         res.setHeader('Content-Type', 'text/html');
         res.write(landingPage.html);
@@ -45,7 +47,7 @@ export class ApolloServerExpress<
         // body-parser@2.)
         res.status(500);
         res.send(
-          '`res.body` is not set; this probably means you forgot to set up the ' +
+          '`req.body` is not set; this probably means you forgot to set up the ' +
             '`body-parser` middleware before the Apollo Server middleware.',
         );
         return;
@@ -71,7 +73,7 @@ export class ApolloServerExpress<
       // that does error handling in a consistent and plugin-visible way. For
       // now we will fall back to some old code that throws an HTTP-GraphQL
       // error and we will catch and handle it, blah.
-      let context;
+      let context: TContext;
       try {
         context = await contextFunction({ req, res });
       } catch (e: any) {
@@ -95,35 +97,70 @@ export class ApolloServerExpress<
           });
         } catch (error: any) {
           handleError(error);
-          return;
         }
-      }
-
-      let r;
-      try {
-        r = await runHttpQuery({
-          method: req.method,
-          // TODO(AS4): error handling
-          options: await this.graphQLServerOptions(),
-          context,
-          query: req.method === 'POST' ? req.body : req.query,
-          request: convertNodeHttpToRequest(req),
-        });
-      } catch (error: any) {
-        handleError(error);
         return;
       }
 
-      const { graphqlResponse, responseInit } = r;
-
-      if (responseInit.headers) {
-        for (const [name, value] of Object.entries(responseInit.headers)) {
-          res.setHeader(name, value);
+      const headers = new Map<string, string>();
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (value !== undefined) {
+          // Node/Express headers can be an array or a single value. We join
+          // multi-valued headers with `, ` just like the Fetch API's `Headers`
+          // does. We assume that keys are already lower-cased (as per the Node
+          // docs on IncomingMessage.headers) and so we don't bother to lower-case
+          // them or combine across multiple keys that would lower-case to the
+          // same value.
+          headers.set(key, Array.isArray(value) ? value.join(', ') : value);
         }
       }
-      res.statusCode = responseInit.status || 200;
 
-      res.send(graphqlResponse);
+      // TODO(AS4): Make batching optional and off by default; perhaps move it
+      // to a separate middleware.
+      const requestBodies = Array.isArray(req.body) ? req.body : [req.body];
+      // TODO(AS4): Handle empty list as an error
+      const responseBodies = await Promise.all(
+        requestBodies.map(async (body) => {
+          const request: HTTPGraphQLRequest = {
+            method: req.method.toUpperCase(),
+            headers,
+            pathname: req.path,
+            searchParams: req.query,
+            body,
+          };
+
+          let response;
+          try {
+            response = await runHttpQuery(
+              request,
+              context,
+              // TODO(AS4): error handling
+              await this.graphQLServerOptions(),
+            );
+          } catch (error: any) {
+            handleError(error);
+            return;
+          }
+
+          if (response.completeBody === null) {
+            // TODO(AS4): Implement incremental delivery or improve error handling.
+            throw Error('Incremental delivery not implemented');
+          }
+          for (const [key, value] of response.headers) {
+            // Override any similar header set in other responses.
+            // TODO(AS4): this is what AS3 did but maybe this is silly
+            res.setHeader(key, value);
+          }
+          // Errors dominate success.
+          res.statusCode = Math.max(response.statusCode, res.statusCode);
+          return response.completeBody;
+        }),
+      );
+
+      res.send(
+        Array.isArray(req.body)
+          ? `[${responseBodies.join(',')}]`
+          : responseBodies[0],
+      );
     });
   }
 }
