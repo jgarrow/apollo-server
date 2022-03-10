@@ -89,6 +89,7 @@ export class ApolloServerExpress<
             e.extensions.code !== 'INTERNAL_SERVER_ERROR'
               ? 400
               : 500;
+          // XXX when we get rid of this function, make sure this line still does formatApolloErrors
           throwHttpGraphQLError(statusCode, [e], {
             debug:
               this.requestOptions.debug ??

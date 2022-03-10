@@ -391,7 +391,9 @@ export async function runHttpQuery<TContext extends BaseContext>(
     if (error instanceof HttpQueryError) {
       return error.asHTTPGraphQLResponse();
     }
+
     throw error;
+    // XXX we are here and this one should do formatApolloErrors
     //  return throwHttpGraphQLError(500, [error as Error], options);
   }
 }
