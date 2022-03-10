@@ -46,22 +46,49 @@ interface HttpQueryResponse {
   responseInit: ApolloServerHttpResponse;
 }
 
+// TODO(AS4): keep rethinking whether Map is what we want or if we just
+// do want to use (our own? somebody else's?) Headers class.
+class HeaderMap extends Map<string, string> {
+  override set(key: string, value: string): this {
+    if (key.toLowerCase() !== key) {
+      throw Error(`Headers must be lower-case, unlike ${key}`);
+    }
+    return super.set(key, value);
+  }
+}
+
 export class HttpQueryError extends Error {
   public statusCode: number;
   public isGraphQLError: boolean;
-  public headers?: { [key: string]: string };
+  // TODO(AS4): consider making this a map (or whatever type we settle on
+  // for headers)
+  public headers: Map<string, string>;
 
   constructor(
     statusCode: number,
     message: string,
     isGraphQLError: boolean = false,
-    headers?: { [key: string]: string },
+    headers?: Map<string, string>,
   ) {
     super(message);
     this.name = 'HttpQueryError';
     this.statusCode = statusCode;
     this.isGraphQLError = isGraphQLError;
-    this.headers = headers;
+    // This throws if any header names have capital leaders.
+    this.headers = new HeaderMap(headers ?? []);
+  }
+
+  asHTTPGraphQLResponse(): HTTPGraphQLResponse {
+    return {
+      statusCode: this.statusCode,
+      // Copy to HeaderMap to ensure lower-case keys.
+      headers: new HeaderMap([
+        ['content-type', 'text/plain'],
+        ...this.headers.entries(),
+      ]),
+      completeBody: this.message,
+      bodyChunks: null,
+    };
   }
 }
 
@@ -202,104 +229,103 @@ export async function runHttpQuery<TContext extends BaseContext>(
   context: TContext,
   options: GraphQLServerOptions<TContext>,
 ): Promise<HTTPGraphQLResponse> {
-  if (options.debug === undefined) {
-    options.debug = debugFromNodeEnv(options.nodeEnv);
-  }
-
-  let graphqlRequest: GraphQLRequest;
-
-  switch (httpRequest.method) {
-    case 'POST':
-      if (!isNonEmptyStringRecord(httpRequest.body)) {
-        throw new HttpQueryError(
-          400,
-          'POST body missing, invalid Content-Type, or JSON object has no keys.',
-        );
-      }
-
-      ensureQueryIsStringOrMissing(httpRequest.body.query);
-
-      graphqlRequest = {
-        query: fieldIfString(httpRequest.body, 'query'),
-        operationName: fieldIfString(httpRequest.body, 'operationName'),
-        variables: fieldIfRecord(httpRequest.body, 'variables'),
-        extensions: fieldIfRecord(httpRequest.body, 'extensions'),
-        http: httpRequest,
-      };
-
-      break;
-    case 'GET':
-      if (!isNonEmptyStringRecord(httpRequest.searchParams)) {
-        throw new HttpQueryError(400, 'GET query missing.');
-      }
-
-      ensureQueryIsStringOrMissing(httpRequest.searchParams.query);
-
-      graphqlRequest = {
-        query: fieldIfString(httpRequest.searchParams, 'query'),
-        operationName: fieldIfString(httpRequest.searchParams, 'operationName'),
-        variables: jsonParsedFieldIfNonEmptyString(
-          httpRequest.searchParams,
-          'variables',
-        ),
-        extensions: jsonParsedFieldIfNonEmptyString(
-          httpRequest.searchParams,
-          'extensions',
-        ),
-        http: httpRequest,
-      };
-
-      break;
-    default:
-      throw new HttpQueryError(
-        405,
-        'Apollo Server supports only GET/POST requests.',
-        false,
-        {
-          Allow: 'GET, POST',
-        },
-      );
-  }
-
-  const plugins = [...(options.plugins ?? [])];
-
-  // GET operations should only be queries (not mutations). We want to throw
-  // a particular HTTP error in that case.
-  if (httpRequest.method === 'GET') {
-    plugins.unshift({
-      async requestDidStart() {
-        return {
-          async didResolveOperation({ operation }) {
-            if (operation.operation !== 'query') {
-              throw new HttpQueryError(
-                405,
-                `GET supports only query operation`,
-                false,
-                {
-                  Allow: 'POST',
-                },
-              );
-            }
-          },
-        };
-      },
-    });
-  }
-
-  // Create a local copy of `options`, based on global options, but maintaining
-  // that appropriate plugins are in place.
-  options = {
-    ...options,
-    plugins,
-  };
-
-  const partialResponse: Pick<HTTPGraphQLResponse, 'headers' | 'statusCode'> = {
-    headers: new Map([['content-type', 'application/json']]),
-    statusCode: undefined,
-  };
-  let body: string;
-
   try {
+    if (options.debug === undefined) {
+      options.debug = debugFromNodeEnv(options.nodeEnv);
+    }
+
+    let graphqlRequest: GraphQLRequest;
+
+    switch (httpRequest.method) {
+      case 'POST':
+        if (!isNonEmptyStringRecord(httpRequest.body)) {
+          throw new HttpQueryError(
+            400,
+            'POST body missing, invalid Content-Type, or JSON object has no keys.',
+          );
+        }
+
+        ensureQueryIsStringOrMissing(httpRequest.body.query);
+
+        graphqlRequest = {
+          query: fieldIfString(httpRequest.body, 'query'),
+          operationName: fieldIfString(httpRequest.body, 'operationName'),
+          variables: fieldIfRecord(httpRequest.body, 'variables'),
+          extensions: fieldIfRecord(httpRequest.body, 'extensions'),
+          http: httpRequest,
+        };
+
+        break;
+      case 'GET':
+        if (!isNonEmptyStringRecord(httpRequest.searchParams)) {
+          throw new HttpQueryError(400, 'GET query missing.');
+        }
+
+        ensureQueryIsStringOrMissing(httpRequest.searchParams.query);
+
+        graphqlRequest = {
+          query: fieldIfString(httpRequest.searchParams, 'query'),
+          operationName: fieldIfString(
+            httpRequest.searchParams,
+            'operationName',
+          ),
+          variables: jsonParsedFieldIfNonEmptyString(
+            httpRequest.searchParams,
+            'variables',
+          ),
+          extensions: jsonParsedFieldIfNonEmptyString(
+            httpRequest.searchParams,
+            'extensions',
+          ),
+          http: httpRequest,
+        };
+
+        break;
+      default:
+        throw new HttpQueryError(
+          405,
+          'Apollo Server supports only GET/POST requests.',
+          false,
+          new HeaderMap([['allow', 'GET, POST']]),
+        );
+    }
+
+    const plugins = [...(options.plugins ?? [])];
+
+    // GET operations should only be queries (not mutations). We want to throw
+    // a particular HTTP error in that case.
+    if (httpRequest.method === 'GET') {
+      plugins.unshift({
+        async requestDidStart() {
+          return {
+            async didResolveOperation({ operation }) {
+              if (operation.operation !== 'query') {
+                throw new HttpQueryError(
+                  405,
+                  `GET supports only query operation`,
+                  false,
+                  new HeaderMap([['allow', 'POST']]),
+                );
+              }
+            },
+          };
+        },
+      });
+    }
+
+    // Create a local copy of `options`, based on global options, but maintaining
+    // that appropriate plugins are in place.
+    options = {
+      ...options,
+      plugins,
+    };
+
+    const partialResponse: Pick<HTTPGraphQLResponse, 'headers' | 'statusCode'> =
+      {
+        headers: new HeaderMap([['content-type', 'application/json']]),
+        statusCode: undefined,
+      };
+
     const requestContext: GraphQLRequestContext<TContext> = {
       // While `logger` is guaranteed by internal Apollo Server usage of
       // this `processHTTPRequest` method, this method has been publicly
@@ -336,7 +362,7 @@ export async function runHttpQuery<TContext extends BaseContext>(
       // don't include options, since the errors have already been formatted
       return {
         statusCode: response.http?.statusCode || 400,
-        headers: new Map([
+        headers: new HeaderMap([
           ['content-type', 'application/json'],
           ...response.http?.headers.entries(),
         ]),
@@ -349,24 +375,25 @@ export async function runHttpQuery<TContext extends BaseContext>(
       };
     }
 
-    body = prettyJSONStringify(serializeGraphQLResponse(response));
+    const body = prettyJSONStringify(serializeGraphQLResponse(response));
+
+    partialResponse.headers.set(
+      'content-length',
+      Buffer.byteLength(body, 'utf8').toString(),
+    );
+
+    return {
+      ...partialResponse,
+      completeBody: body,
+      bodyChunks: null,
+    };
   } catch (error) {
-    // TODO(AS4): NEXT: Process HttpQueryError instead of rethrowing
     if (error instanceof HttpQueryError) {
-      throw error;
+      return error.asHTTPGraphQLResponse();
     }
-    return throwHttpGraphQLError(500, [error as Error], options);
+    throw error;
+    //  return throwHttpGraphQLError(500, [error as Error], options);
   }
-
-  responseInit.headers!['Content-Length'] = Buffer.byteLength(
-    body,
-    'utf8',
-  ).toString();
-
-  return {
-    graphqlResponse: body,
-    responseInit,
-  };
 }
 
 function serializeGraphQLResponse(

@@ -1,4 +1,3 @@
-import type { Request, Response } from 'node-fetch';
 import type {
   GraphQLSchema,
   ValidationContext,
@@ -89,8 +88,6 @@ export type AnyFunction = (...args: any[]) => any;
  * request listeners. (e.g. `GraphQLRequestListener`s).
  */
 export type AnyFunctionMap = { [key: string]: AnyFunction | undefined };
-
-type Mutable<T> = { -readonly [P in keyof T]: T[P] };
 
 // Configuration for how Apollo Server talks to the Apollo registry, as passed
 // to the ApolloServer constructor. Each field can also be provided as an

@@ -574,7 +574,7 @@ export async function processGraphQLRequest<TContext>(
     } else if (errors.length === 1 && errors[0] instanceof HttpQueryError) {
       response.http = {
         status: errors[0].statusCode,
-        headers: new Headers(errors[0].headers),
+        headers: errors[0].headers,
       };
     }
 
