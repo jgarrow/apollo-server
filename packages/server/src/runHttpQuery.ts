@@ -1,9 +1,5 @@
-import { Request, Headers } from 'node-fetch';
-import type {
-  default as GraphQLOptions,
-  GraphQLServerOptions,
-} from './graphqlOptions';
-import { ApolloError, formatApolloErrors } from './errors';
+import type { GraphQLServerOptions } from './graphqlOptions';
+import { formatApolloErrors } from './errors';
 import {
   processGraphQLRequest,
   GraphQLRequest,
@@ -11,44 +7,18 @@ import {
   GraphQLResponse,
 } from './requestPipeline';
 import type {
-  GraphQLExecutionResult,
   BaseContext,
   HTTPGraphQLRequest,
   HTTPGraphQLResponse,
 } from '@apollo/server-types';
 import { newCachePolicy } from './cachePolicy';
-
-export interface HttpQueryRequest<TContext extends BaseContext> {
-  method: string;
-  // query is either the POST body or the GET query string map.  In the GET
-  // case, all values are strings and need to be parsed as JSON; in the POST
-  // case they should already be parsed. query has keys like 'query' (whose
-  // value should always be a string), 'variables', 'operationName',
-  // 'extensions', etc.
-  query: Record<string, any> | Array<Record<string, any>>;
-  options: GraphQLOptions<TContext>;
-  context: TContext;
-  request: Pick<Request, 'url' | 'method' | 'headers'>;
-}
-
-interface ApolloServerHttpResponse {
-  headers?: Record<string, string>;
-  status?: number;
-  // ResponseInit contains the follow, which we do not use
-  // statusText?: string;
-}
-
-interface HttpQueryResponse {
-  // TODO: This isn't actually an individual GraphQL response, but the body
-  // of the HTTP response, which could contain multiple GraphQL responses
-  // when using batching.
-  graphqlResponse: string;
-  responseInit: ApolloServerHttpResponse;
-}
+import type { GraphQLError, GraphQLFormattedError } from 'graphql';
 
 // TODO(AS4): keep rethinking whether Map is what we want or if we just
 // do want to use (our own? somebody else's?) Headers class.
-class HeaderMap extends Map<string, string> {
+// TODO(AS4): probably should do something better if you pass upper-case
+// to get/has/delete as well.
+export class HeaderMap extends Map<string, string> {
   override set(key: string, value: string): this {
     if (key.toLowerCase() !== key) {
       throw Error(`Headers must be lower-case, unlike ${key}`);
@@ -94,53 +64,6 @@ export class HttpQueryError extends Error {
 
 export function isHttpQueryError(e: unknown): e is HttpQueryError {
   return (e as any)?.name === 'HttpQueryError';
-}
-
-/**
- * If options is specified, then the errors array will be formatted
- */
-export function throwHttpGraphQLError<
-  TContext extends BaseContext,
-  E extends Error,
->(
-  statusCode: number,
-  errors: Array<E>,
-  options?: Pick<GraphQLOptions<TContext>, 'debug' | 'formatError'>,
-  extensions?: GraphQLExecutionResult['extensions'],
-  headers?: Headers,
-): never {
-  const allHeaders: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (headers) {
-    for (const [name, value] of headers) {
-      allHeaders[name] = value;
-    }
-  }
-
-  type Result = Pick<GraphQLExecutionResult, 'extensions'> & {
-    errors: E[] | ApolloError[];
-  };
-
-  const result: Result = {
-    errors: options
-      ? formatApolloErrors(errors, {
-          debug: options.debug,
-          formatter: options.formatError,
-        })
-      : errors,
-  };
-
-  if (extensions) {
-    result.extensions = extensions;
-  }
-
-  throw new HttpQueryError(
-    statusCode,
-    prettyJSONStringify(result),
-    true,
-    allHeaders,
-  );
 }
 
 const NODE_ENV = process.env.NODE_ENV ?? '';
@@ -224,6 +147,7 @@ function ensureQueryIsStringOrMissing(query: any) {
   }
 }
 
+// This function should not throw.
 export async function runHttpQuery<TContext extends BaseContext>(
   httpRequest: HTTPGraphQLRequest,
   context: TContext,
@@ -392,9 +316,17 @@ export async function runHttpQuery<TContext extends BaseContext>(
       return error.asHTTPGraphQLResponse();
     }
 
-    throw error;
-    // XXX we are here and this one should do formatApolloErrors
-    //  return throwHttpGraphQLError(500, [error as Error], options);
+    return {
+      statusCode: 500,
+      headers: new HeaderMap([['content-type', 'application/json']]),
+      completeBody: prettyJSONStringify({
+        errors: formatApolloErrors([error as Error], {
+          debug: options.debug,
+          formatter: options.formatError,
+        }),
+      }),
+      bodyChunks: null,
+    };
   }
 }
 
@@ -417,4 +349,44 @@ function prettyJSONStringify(value: any) {
 
 export function cloneObject<T extends Object>(object: T): T {
   return Object.assign(Object.create(Object.getPrototypeOf(object)), object);
+}
+
+type ContextFunctionExecutionResult<TContext extends BaseContext> =
+  | { errorHTTPGraphQLResponse: HTTPGraphQLResponse }
+  | { errorHTTPGraphQLResponse: null; context: TContext };
+// TODO(AS4): Move this into ApolloServer.
+// TODO(AS4): Errors here should get into plugins somehow.
+export async function executeContextFunction<TContext extends BaseContext>(
+  contextFunction: () => Promise<TContext>,
+  // TODO(AS4): These won't be necessary once it's on ApolloServer.
+  options: {
+    formatter?: (error: GraphQLError) => GraphQLFormattedError;
+    debug?: boolean;
+  },
+): Promise<ContextFunctionExecutionResult<TContext>> {
+  try {
+    return { context: await contextFunction(), errorHTTPGraphQLResponse: null };
+  } catch (e: any) {
+    // XXX `any` isn't ideal, but this is the easiest thing for now, without
+    // introducing a strong `instanceof GraphQLError` requirement.
+    e.message = `Context creation failed: ${e.message}`;
+    // For errors that are not internal, such as authentication, we
+    // should provide a 400 response
+    const statusCode =
+      e.extensions &&
+      e.extensions.code &&
+      e.extensions.code !== 'INTERNAL_SERVER_ERROR'
+        ? 400
+        : 500;
+    return {
+      errorHTTPGraphQLResponse: {
+        statusCode,
+        headers: new HeaderMap([['content-type', 'application/json']]),
+        completeBody: prettyJSONStringify({
+          errors: formatApolloErrors([e as Error], options),
+        }),
+        bodyChunks: null,
+      },
+    };
+  }
 }

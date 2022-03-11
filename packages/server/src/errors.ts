@@ -255,6 +255,7 @@ export class UserInputError extends ApolloError {
   }
 }
 
+// This function should not throw.
 export function formatApolloErrors(
   errors: ReadonlyArray<Error>,
   options?: {
