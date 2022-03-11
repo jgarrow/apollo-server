@@ -162,11 +162,12 @@ export async function runHttpQuery<TContext extends BaseContext>(
 
     switch (httpRequest.method) {
       case 'POST':
+        // TODO(AS4): If it's an array, some error about enabling batching?
         if (!isNonEmptyStringRecord(httpRequest.body)) {
-          throw new HttpQueryError(
+          return new HttpQueryError(
             400,
             'POST body missing, invalid Content-Type, or JSON object has no keys.',
-          );
+          ).asHTTPGraphQLResponse();
         }
 
         ensureQueryIsStringOrMissing(httpRequest.body.query);
@@ -182,7 +183,10 @@ export async function runHttpQuery<TContext extends BaseContext>(
         break;
       case 'GET':
         if (!isNonEmptyStringRecord(httpRequest.searchParams)) {
-          throw new HttpQueryError(400, 'GET query missing.');
+          return new HttpQueryError(
+            400,
+            'GET query missing.',
+          ).asHTTPGraphQLResponse();
         }
 
         ensureQueryIsStringOrMissing(httpRequest.searchParams.query);
@@ -206,12 +210,12 @@ export async function runHttpQuery<TContext extends BaseContext>(
 
         break;
       default:
-        throw new HttpQueryError(
+        return new HttpQueryError(
           405,
           'Apollo Server supports only GET/POST requests.',
           false,
           new HeaderMap([['allow', 'GET, POST']]),
-        );
+        ).asHTTPGraphQLResponse();
     }
 
     const plugins = [...(options.plugins ?? [])];
