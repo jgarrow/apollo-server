@@ -141,11 +141,17 @@ export interface GraphQLRequest {
 
 export type VariableValues = { [name: string]: any };
 
+// TODO(AS4): does this differ in an interesting way from GraphQLExecutionResult
+// and graphql-js ExecutionResult? It does have `http` but perhaps this can be an
+// "extends". Ah, the difference is about formatted vs throwable errors? Let's
+// make sure we at least understand it.
 export interface GraphQLResponse {
   data?: Record<string, any> | null;
   errors?: ReadonlyArray<GraphQLFormattedError>;
   extensions?: Record<string, any>;
-  http: Pick<HTTPGraphQLResponse, 'headers' | 'statusCode'>;
+  // TODO(AS4): Seriously consider whether this type makes sense at all or whether
+  // http response should just be its own top level thing on HTTPRequestContext?
+  http?: Pick<HTTPGraphQLResponse, 'headers' | 'statusCode'>;
 }
 
 export interface GraphQLRequestMetrics {
@@ -207,6 +213,9 @@ export type GraphQLExecutor<TContext = Record<string, any>> = (
   requestContext: GraphQLRequestContextExecutionDidStart<TContext>,
 ) => Promise<GraphQLExecutionResult>;
 
+// TODO(AS4): Can we just use graphql-js ExecutionResult? The main difference
+// seems to be any vs unknown, although we could at least use
+// `ExecutionResult<Record<string, any>, Record<string, any>>`.
 export type GraphQLExecutionResult = {
   data?: Record<string, any> | null;
   errors?: ReadonlyArray<GraphQLError>;

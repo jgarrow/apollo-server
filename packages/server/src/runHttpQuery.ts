@@ -292,7 +292,7 @@ export async function runHttpQuery<TContext extends BaseContext>(
         statusCode: response.http?.statusCode || 400,
         headers: new HeaderMap([
           ['content-type', 'application/json'],
-          ...response.http?.headers.entries(),
+          ...(response.http?.headers ?? new Map()),
         ]),
         completeBody: prettyJSONStringify({
           // TODO(AS4): Understand why we don't call formatApolloErrors here.

@@ -55,9 +55,8 @@ import { KeyValueCache, PrefixingKeyValueCache } from 'apollo-server-caching';
 export { GraphQLRequest, GraphQLResponse, GraphQLRequestContext };
 
 import createSHA from './utils/createSHA';
-import { HttpQueryError } from './runHttpQuery';
+import { HeaderMap, HttpQueryError } from './runHttpQuery';
 import type { DocumentStore } from './types';
-import { Headers } from 'node-fetch';
 
 export const APQ_CACHE_PREFIX = 'apq:';
 
@@ -500,13 +499,15 @@ export async function processGraphQLRequest<TContext>(
     if (response.http) {
       if (!requestContext.response.http) {
         requestContext.response.http = {
-          headers: new Headers(),
+          headers: new HeaderMap(),
         };
       }
-      if (response.http.status) {
-        requestContext.response.http.status = response.http.status;
+      if (response.http.statusCode) {
+        requestContext.response.http.statusCode = response.http.statusCode;
       }
       for (const [name, value] of response.http.headers) {
+        // TODO(AS4): this is overwriting rather than appending. However we should
+        // probably be able to eliminate this whole block if we refactor GraphQLResponse.
         requestContext.response.http.headers.set(name, value);
       }
     }
@@ -566,14 +567,14 @@ export async function processGraphQLRequest<TContext>(
       )
     ) {
       response.http = {
-        status: 200,
-        headers: new Headers({
-          'Cache-Control': 'private, no-cache, must-revalidate',
-        }),
+        statusCode: 200,
+        headers: new HeaderMap([
+          ['cache-control', 'private, no-cache, must-revalidate'],
+        ]),
       };
     } else if (errors.length === 1 && errors[0] instanceof HttpQueryError) {
       response.http = {
-        status: errors[0].statusCode,
+        statusCode: errors[0].statusCode,
         headers: errors[0].headers,
       };
     }
